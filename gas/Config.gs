@@ -5,6 +5,8 @@ var PROP_TELEGRAM_ALLOWED_CHAT_ID = 'TELEGRAM_ALLOWED_CHAT_ID';
 var PROP_TELEGRAM_WEBHOOK_KEY = 'TELEGRAM_WEBHOOK_KEY';
 /** 대상 캘린더 ID (기본 캘린더면 'primary') */
 var PROP_CALENDAR_ID = 'CALENDAR_ID';
+/** 캘린더 별칭 JSON. 예: {"Tom":"tom_calendar_id@group.calendar.google.com"} */
+var PROP_CALENDAR_ALIASES_JSON = 'CALENDAR_ALIASES_JSON';
 
 function getScriptProp_(key) {
   return PropertiesService.getScriptProperties().getProperty(key) || '';

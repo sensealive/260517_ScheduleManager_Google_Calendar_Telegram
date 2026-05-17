@@ -7,16 +7,42 @@ var MSG_PAST =
 
 var HELP_TEXT =
   '올바른 예시)\n' +
-  '• 등록: 5.8 오후 3시 업체미팅(영일) = 당일 오전 9시 알림\n' +
-  '• 명령: 오늘일정 / 내일일정 / 모레일정 / 6.20 일정 / 차주 금 일정 / 명령어';
+  '• 5.20 연차\n' +
+  '• 5.20 연차 = 온종일\n' +
+  '• 5.20 연차 = 하루전날\n' +
+  '• 5.20 연차 = 6시간 전\n' +
+  '• 5.8 오후 3시 업체미팅(영일) = 30분 전\n' +
+  '• 6.3~6.8 출장 = 하루전날\n' +
+  '• 5.22 오후 2시 회의 = 6.30까지 매주 반복\n' +
+  '• 명령: 오늘일정 / 내일일정 / 모레일정 / 다음주 일정 / 6.20 일정 / 차주 금 일정 / 명령어';
+
+var REGISTRATION_HELP_TEXT =
+  '일정등록방법\n' +
+  '• 기본: M.D 제목\n' +
+  '  예) 5.20 연차\n' +
+  '• 캘린더 선택: 별칭 일정 줄 다음에 등록 내용을 입력\n' +
+  '  예) Tom 일정\\n5.20 연차 = 하루전날\n' +
+  '• 시간 일정: M.D 오전/오후 N시 제목 = 알림 조건\n' +
+  '  예) 5.8 오후 3시 업체미팅 = 30분 전\n' +
+  '• 종일 일정: M.D 제목 = 온종일 또는 하루종일\n' +
+  '  예) 5.20 연차 = 하루종일\n' +
+  '• 기본: 알림 조건이 없으면 기본 알림을 붙임\n' +
+  '• 알림 조건: 30분 전 / 6시간 전 / 하루전날 / 오전 9시\n' +
+  '  예) 5.20 연차 = 하루전날\n' +
+  '• 기간 일정: M.D~M.D 제목 = 알림 조건\n' +
+  '  예) 6.3~6.8 출장 = 하루전날\n' +
+  '• 반복 일정: M.D 시간 제목 = M.D까지 매주 반복\n' +
+  '  예) 5.22 오후 2시 회의 = 6.30까지 매주 반복';
 
 var COMMAND_LIST_TEXT =
   '지원 명령어\n' +
   '• 오늘일정\n' +
   '• 내일일정\n' +
   '• 모레일정\n' +
+  '• 다음주 일정\n' +
   '• M.D 일정 (예: 6.20 일정)\n' +
   '• 차주 (월|화|수|목|금|토|일) 일정 (예: 차주 금 일정)\n' +
+  '• 일정등록방법 / 등록방법 / help\n' +
   '• 명령어';
 
 /**
@@ -30,7 +56,11 @@ function tryParseCommand_(text) {
   if (t === '오늘일정') return { type: 'cmd', cmd: 'today' };
   if (t === '내일일정') return { type: 'cmd', cmd: 'tomorrow' };
   if (t === '모레일정') return { type: 'cmd', cmd: 'dayafter' };
+  if (t === '다음주 일정') return { type: 'cmd', cmd: 'nextweekall' };
   if (t === '명령어') return { type: 'cmd', cmd: 'helpcmd' };
+  if (t === '일정등록방법' || t === '등록방법' || t.toLowerCase() === 'help') {
+    return { type: 'cmd', cmd: 'reghelp' };
+  }
   var cw = t.match(/^차주\s*([월화수목금토일])\s*일정$/);
   if (cw) return { type: 'cmd', cmd: 'nextweek', weekday: cw[1] };
   var dm = t.match(/^(\d{1,2})\.(\d{1,2})\s*일정$/);
@@ -45,11 +75,13 @@ function tryParseCommand_(text) {
 function parseRegistrationLine_(line) {
   var raw = String(line).trim();
   if (!raw) return { ok: false, error: HELP_TEXT };
+  var target = extractCalendarTarget_(raw);
+  raw = target.line;
   var eq = raw.indexOf('=');
-  if (eq < 0) return { ok: false, error: HELP_TEXT };
-  var left = raw.slice(0, eq).trim();
-  var right = raw.slice(eq + 1).trim();
-  if (!left || !right) return { ok: false, error: HELP_TEXT };
+  var left = eq < 0 ? raw : raw.slice(0, eq).trim();
+  var right = eq < 0 ? '' : raw.slice(eq + 1).trim();
+  if (!left) return { ok: false, error: HELP_TEXT };
+  if (eq >= 0 && !right) return { ok: false, error: HELP_TEXT };
 
   var consumed = 0;
   var y;
@@ -136,10 +168,10 @@ function parseRegistrationLine_(line) {
   /** @type {Object} */
   var payload = {
     title: title,
+    calendarAlias: target.alias,
     optionText: right,
     recurrence: opts.recurrence,
     reminderRules: opts.reminderRules,
-    alertEvents: opts.alertEvents,
   };
 
   if (range) {
@@ -172,7 +204,31 @@ function parseRegistrationLine_(line) {
     if (last.getTime() < now.getTime()) return { ok: false, error: MSG_PAST };
   }
 
+  applyDefaultReminder_(payload);
   return { ok: true, payload: payload };
+}
+
+function extractCalendarTarget_(raw) {
+  var lines = String(raw)
+    .split(/\r?\n/)
+    .map(function (s) {
+      return s.trim();
+    })
+    .filter(function (s) {
+      return !!s;
+    });
+
+  if (lines.length >= 2) {
+    var m = lines[0].match(/^(.+?)\s*일정$/);
+    if (m) {
+      return {
+        alias: m[1].trim(),
+        line: lines.slice(1).join(' '),
+      };
+    }
+  }
+
+  return { alias: '', line: raw };
 }
 
 /**
@@ -183,7 +239,6 @@ function parseOptionString_(opt, startCtx) {
   var out = {
     recurrence: null,
     reminderRules: [],
-    alertEvents: [],
   };
   var t = String(opt);
 
@@ -196,21 +251,44 @@ function parseOptionString_(opt, startCtx) {
   }
 
   if (/30분\s*전/.test(t)) out.reminderRules.push({ kind: 'minutes', n: 30 });
-  if (/1일\s*전/.test(t)) out.reminderRules.push({ kind: 'days_before', n: 1 });
+  var hm = t.match(/(\d{1,2})\s*시간\s*전/);
+  if (hm) out.reminderRules.push({ kind: 'hours_before', n: Number(hm[1]) });
+  if (/1일\s*전|하루\s*전|하루전날|전날/.test(t)) {
+    out.reminderRules.push({ kind: 'previous_day_morning', hour: 9, minute: 0 });
+  }
 
-  if (/(\d{1,2})\.(\d{1,2})\s*오전\s*당일\s*9시/.test(t)) {
-    var am = t.match(/(\d{1,2})\.(\d{1,2})\s*오전\s*당일\s*9시/);
-    if (am)
-      out.alertEvents.push({
-        y: resolveYearForMonthDay_(Number(am[1]), Number(am[2]), nowSeoul_()),
-        m: Number(am[1]),
-        d: Number(am[2]),
-        hour: 9,
-        minute: 0,
-      });
-  } else if (/당일\s*오전\s*9시/.test(t) || /오전\s*9시\s*알림/.test(t)) {
-    out.reminderRules.push({ kind: 'same_day_morning', hour: 9 });
+  if (/당일\s*오전\s*9시/.test(t) || /오전\s*9시/.test(t)) {
+    out.reminderRules.push({ kind: 'same_day_morning', hour: 9, minute: 0 });
   }
 
   return out;
+}
+
+function applyDefaultReminder_(payload) {
+  if (payload.reminderRules && payload.reminderRules.length) {
+    return;
+  }
+
+  if (payload.kind === 'timed') {
+    var f = seoulFields_(payload.start);
+    var eventMinutes = f.hh * 60 + f.mm;
+    var firstSlot = 9 * 60;
+    if (eventMinutes < firstSlot) return;
+    var maxSlot = Math.min(11, Math.floor((eventMinutes - firstSlot) / 5));
+    var timedMinute = defaultMorningReminderMinute_(payload.title, f, maxSlot);
+    payload.reminderRules.push({ kind: 'same_day_morning', hour: 9, minute: timedMinute });
+    return;
+  }
+
+  payload.reminderRules.push({ kind: 'same_day_morning', hour: 9, minute: 0 });
+}
+
+function defaultMorningReminderMinute_(title, ymd, maxSlot) {
+  var s = String(ymd.y) + '-' + String(ymd.m) + '-' + String(ymd.d || ymd.day) + '-' + String(title || '');
+  var h = 0;
+  for (var i = 0; i < s.length; i++) {
+    h = (h * 31 + s.charCodeAt(i)) % 9973;
+  }
+  var limit = maxSlot === undefined ? 11 : maxSlot;
+  return (h % (limit + 1)) * 5;
 }

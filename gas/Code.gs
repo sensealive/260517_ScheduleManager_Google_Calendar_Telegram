@@ -10,6 +10,7 @@
  *   TELEGRAM_ALLOWED_CHAT_ID  (선택, 비우면 모든 채팅 허용 — 비권장)
  *   TELEGRAM_WEBHOOK_KEY      (선택, URL ?key= 와 일치)
  *   CALENDAR_ID               (선택, 기본 'primary')
+ *   CALENDAR_ALIASES_JSON     (선택, 예: {"Tom":"tom_calendar_id@group.calendar.google.com"})
  */
 
 function doPost(e) {
@@ -61,9 +62,11 @@ function handleUserText_(text) {
   var cmd = tryParseCommand_(text);
   if (cmd) {
     if (cmd.cmd === 'helpcmd') return COMMAND_LIST_TEXT;
+    if (cmd.cmd === 'reghelp') return REGISTRATION_HELP_TEXT;
     if (cmd.cmd === 'today') return listAndFormatDay_(0);
     if (cmd.cmd === 'tomorrow') return listAndFormatDay_(1);
     if (cmd.cmd === 'dayafter') return listAndFormatDay_(2);
+    if (cmd.cmd === 'nextweekall') return listAndFormatNextWeek_();
     if (cmd.cmd === 'nextweek') {
       var ymd = nextWeekKoreanWeekdayYmd_(cmd.weekday, nowSeoul_());
       return listAndFormatYmd_(ymd.y, ymd.m, ymd.d);
@@ -78,7 +81,8 @@ function handleUserText_(text) {
   if (reg.ok) {
     try {
       insertRegistration_(reg.payload);
-      return '일정이 등록되었습니다.\n' + reg.payload.title;
+      var target = reg.payload.calendarAlias ? '\n캘린더: ' + reg.payload.calendarAlias : '';
+      return '일정이 등록되었습니다.\n' + reg.payload.title + target;
     } catch (calErr) {
       Logger.log(calErr);
       return '캘린더 등록 실패: ' + (calErr.message || String(calErr));
