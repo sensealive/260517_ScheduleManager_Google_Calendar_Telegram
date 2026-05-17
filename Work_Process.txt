@@ -1,0 +1,662 @@
+Google Calendar + Telegram 연동 작업 절차
+작성일: 2026-05-18
+
+전제
+1. Telegram 계정은 이미 있고, BotFather로 봇을 생성해 Bot Token을 확보한 상태로 진행한다.
+2. Telegram Chat ID는 이미 알고 있는 상태로 진행한다.
+3. Google Calendar 계정은 이미 있는 상태로 진행한다.
+4. Cloudflare 계정은 이미 있는 상태로 진행한다.
+5. 계정 가입 절차, Telegram Bot 생성 절차, Token/ChatID를 가져오는 과정은 이 문서에서 생략한다.
+
+
+1. 전체 구조
+
+최종 구조는 아래와 같다.
+
+Telegram Bot
+-> Cloudflare Worker
+-> Google Apps Script Web App
+-> Google Calendar API
+
+Google Apps Script 웹앱 URL을 Telegram webhook에 직접 연결하면 Google Apps Script가 302 리디렉션을 반환하는 경우가 있어 Telegram에서 "Wrong response from the webhook: 302 Moved Temporarily" 오류가 발생할 수 있다.
+
+이를 피하기 위해 Cloudflare Worker를 중간 프록시로 둔다. Worker는 Telegram에는 즉시 200 OK를 반환하고, 내부에서 GAS 웹앱으로 POST 요청을 전달한다.
+
+
+2. 프로젝트 파일 구성
+
+주요 파일은 아래와 같다.
+
+gas/appsscript.json
+- Apps Script 런타임, 시간대, OAuth Scope, Google Calendar 고급 서비스 설정.
+
+gas/Code.gs
+- doPost, doGet, Telegram webhook 진입점, 명령 처리, 일일 요약 트리거.
+
+gas/Config.gs
+- 스크립트 속성 키 이름 정의.
+- TELEGRAM_BOT_TOKEN
+- TELEGRAM_ALLOWED_CHAT_ID
+- TELEGRAM_WEBHOOK_KEY
+- CALENDAR_ID
+- CALENDAR_ALIASES_JSON
+
+gas/Parser.gs
+- Telegram 메시지 파싱.
+- 일정 등록 문법, 조회 명령어, 등록 도움말 처리.
+
+gas/CalendarOps.gs
+- Google Calendar 이벤트 생성/조회.
+- 알림, 색상, 다중 캘린더 별칭 처리.
+
+gas/DateUtils.gs
+- Asia/Seoul 기준 날짜/시간 유틸리티.
+
+gas/Telegram.gs
+- Telegram sendMessage 호출.
+
+worker/telegram-gas-proxy.js
+- Cloudflare Worker 프록시 코드.
+
+worker/README.md
+- Worker 변수와 webhook 등록 예시.
+
+
+3. Google Apps Script API 켜기
+
+clasp를 사용할 경우 Google Apps Script API를 먼저 켜야 한다.
+
+1. 아래 페이지로 이동한다.
+   https://script.google.com/home/usersettings
+
+2. Google Apps Script API를 On으로 변경한다.
+
+3. 켠 직후 바로 clasp 명령이 실패할 수 있으므로 1~2분 정도 기다린다.
+
+
+4. clasp 개념 및 설치
+
+clasp는 Google Apps Script 프로젝트를 로컬 파일과 동기화하는 CLI 도구다.
+
+이 프로젝트에서는 gas 폴더 아래의 .gs 파일과 appsscript.json을 Apps Script 원격 프로젝트에 올릴 때 사용한다.
+
+전역 설치:
+
+    npm install -g @google/clasp
+
+로그인:
+
+    clasp login
+
+새 GAS 프로젝트 생성:
+
+    clasp create --title "260517 ScheduleManager Telegram Calendar" --type standalone --rootDir gas
+
+주의:
+clasp create를 실행하면 gas/appsscript.json이 Google 기본값으로 덮일 수 있다. 이 프로젝트의 appsscript.json에는 Asia/Seoul 시간대, Calendar API 고급 서비스, 필요한 OAuth Scope가 들어 있으므로 덮였다면 저장소 버전으로 되돌린 뒤 push한다.
+
+원격 GAS 프로젝트에 업로드:
+
+    clasp push
+
+강제 업로드가 필요할 때:
+
+    clasp push --force
+
+기존 프로젝트와 연결되어 있으면 루트에 .clasp.json이 있어야 한다.
+
+
+5. Google Apps Script 프로젝트에 파일 반영
+
+방법 A: clasp 사용
+
+1. 저장소 루트에서 clasp create 또는 기존 .clasp.json 연결을 확인한다.
+2. gas/appsscript.json이 저장소 버전인지 확인한다.
+3. 아래 명령으로 업로드한다.
+
+    clasp push
+
+방법 B: Apps Script 편집기에 직접 붙여넣기
+
+1. https://script.google.com 에서 프로젝트를 연다.
+2. gas 폴더 아래의 .gs 파일 내용을 각각 Apps Script 파일로 만든다.
+3. appsscript.json도 프로젝트 설정에서 매니페스트 파일을 표시한 뒤 반영한다.
+
+
+6. Calendar API 고급 서비스 사용 설정
+
+Apps Script 프로젝트에서 Google Calendar API 고급 서비스를 켜야 한다.
+
+1. Apps Script 편집기 왼쪽 메뉴에서 "서비스" 또는 "Services"를 연다.
+2. "+" 버튼을 누른다.
+3. "Google Calendar API"를 선택한다.
+4. 식별자/Identifier가 Calendar인지 확인한다.
+5. 추가한다.
+
+gas/appsscript.json에는 아래 설정이 포함되어 있어야 한다.
+
+    "enabledAdvancedServices": [
+      {
+        "userSymbol": "Calendar",
+        "serviceId": "calendar",
+        "version": "v3"
+      }
+    ]
+
+Google Cloud 쪽 API 사용 설정을 요구하는 메시지가 나오면 안내에 따라 Calendar API도 활성화한다.
+
+
+7. Apps Script 시간대 및 권한 확인
+
+1. Apps Script 프로젝트 설정에서 시간대를 Asia/Seoul로 맞춘다.
+2. appsscript.json의 timeZone도 "Asia/Seoul"인지 확인한다.
+3. OAuth Scope는 아래가 포함되어야 한다.
+
+    https://www.googleapis.com/auth/calendar
+    https://www.googleapis.com/auth/script.external_request
+
+
+8. Calendar ID 확인 위치
+
+Google Calendar에서 Calendar ID는 아래 위치에서 확인한다.
+
+1. Google Calendar 웹을 연다.
+2. 왼쪽 캘린더 목록에서 대상 캘린더의 점 3개 메뉴를 누른다.
+3. "설정 및 공유"를 연다.
+4. "캘린더 통합" 섹션으로 이동한다.
+5. "캘린더 ID" 값을 복사한다.
+
+참고:
+- 기본 캘린더 ID는 보통 Gmail 주소 형태일 수 있다.
+- 추가로 만든 보조 캘린더는 보통 ...@group.calendar.google.com 형태일 수 있다.
+- 중요한 것은 형태가 아니라 Google Calendar 설정 화면에 표시되는 실제 Calendar ID를 그대로 쓰는 것이다.
+
+
+9. GAS 민감 데이터 넣는 위치
+
+민감 데이터는 코드에 직접 쓰지 않고 Apps Script의 스크립트 속성에 넣는다.
+
+위치:
+
+Apps Script 프로젝트
+-> 프로젝트 설정
+-> 스크립트 속성
+-> 스크립트 속성 추가
+
+필수/권장 속성:
+
+TELEGRAM_BOT_TOKEN
+- Telegram Bot Token.
+
+TELEGRAM_ALLOWED_CHAT_ID
+- 허용할 Telegram Chat ID.
+- 단일 사용자 봇이면 본인 Chat ID를 넣는다.
+
+TELEGRAM_WEBHOOK_KEY
+- Worker가 GAS로 요청을 보낼 때 GAS URL의 ?key= 값과 비교하는 값.
+- 임의 문자열.
+
+CALENDAR_ID
+- 기본 캘린더 ID.
+- 비워두면 코드상 primary를 사용한다.
+
+CALENDAR_ALIASES_JSON
+- 여러 캘린더를 별칭으로 선택 등록할 때 사용한다.
+- 선택값.
+
+예:
+
+    {"Tom":"tom_calendar_id@gmail.com","Company":"company_calendar_id@group.calendar.google.com"}
+
+
+10. TELEGRAM_WEBHOOK_KEY 생성 아이디어
+
+TELEGRAM_WEBHOOK_KEY는 사람이 추측하기 어려운 임의 문자열이면 된다.
+
+PowerShell 예시:
+
+    [guid]::NewGuid().ToString("N")
+
+조금 더 알아보기 쉬운 접두어를 붙이는 예:
+
+    ScheduleManagerBot_260517_랜덤문자열
+
+주의:
+- 코드 저장소에 실제 값을 커밋하지 않는다.
+- Apps Script 스크립트 속성과 Cloudflare Worker의 GAS_WEBAPP_URL 안 ?key= 값이 반드시 같아야 한다.
+
+예:
+
+GAS 스크립트 속성:
+
+    TELEGRAM_WEBHOOK_KEY = ScheduleManagerBot_260517_xxxxx
+
+Worker 변수:
+
+    GAS_WEBAPP_URL = https://script.google.com/macros/s/.../exec?key=ScheduleManagerBot_260517_xxxxx
+
+
+11. GAS 웹앱 배포
+
+Apps Script 편집기에서 진행한다.
+
+1. 오른쪽 위 "배포"를 누른다.
+2. "새 배포"를 선택한다.
+3. 유형 선택에서 "웹 앱"을 선택한다.
+4. 설명을 입력한다.
+5. 실행 계정은 "나"로 둔다.
+6. Who has access 또는 액세스 권한은 반드시 "Anyone"으로 설정한다.
+
+중요:
+Telegram 서버와 Cloudflare Worker가 POST 요청을 보낼 수 있어야 하므로 Anyone이어야 한다.
+
+7. 배포한다.
+8. 권한 승인이 나오면 승인한다.
+9. 웹앱 URL을 복사한다.
+
+URL 형태:
+
+    https://script.google.com/macros/s/.../exec
+
+TELEGRAM_WEBHOOK_KEY를 사용한다면 Worker에는 아래 형태로 넣는다.
+
+    https://script.google.com/macros/s/.../exec?key=TELEGRAM_WEBHOOK_KEY값
+
+
+12. GAS GET 테스트
+
+PowerShell:
+
+    $url = "https://script.google.com/macros/s/.../exec"
+    Invoke-WebRequest -Uri $url -Method GET -MaximumRedirection 5
+
+정상 응답:
+
+    Telegram Calendar bot OK
+
+참고:
+Google Apps Script 웹앱은 302 리디렉션을 거칠 수 있으므로 -MaximumRedirection 0으로 테스트하면 302 관련 오류가 날 수 있다.
+
+
+13. Cloudflare Worker가 필요한 이유
+
+Telegram webhook은 webhook 엔드포인트가 정상적으로 200 OK를 반환하길 기대한다.
+
+GAS 웹앱을 Telegram webhook에 직접 연결하면 GAS가 script.googleusercontent.com 쪽으로 302 리디렉션을 반환하는 경우가 있어 Telegram이 아래 오류를 기록할 수 있다.
+
+    Wrong response from the webhook: 302 Moved Temporarily
+
+Cloudflare Worker를 중간에 두면:
+
+1. Telegram은 Worker에 POST한다.
+2. Worker는 Telegram에 즉시 200 OK를 반환한다.
+3. Worker가 내부에서 GAS 웹앱 URL로 POST를 전달한다.
+4. Worker fetch는 GAS 리디렉션을 따라갈 수 있다.
+
+
+14. Cloudflare Worker 프로젝트 생성
+
+프로젝트 이름:
+
+    260517-schedule-manager-google-calendar-telegram
+
+Cloudflare에서 진행:
+
+1. Cloudflare Dashboard에 들어간다.
+2. Workers & Pages로 이동한다.
+3. Create application 또는 Create Worker를 선택한다.
+4. Worker 프로젝트 이름을 입력한다.
+5. 기본 Worker 코드를 삭제한다.
+6. worker/telegram-gas-proxy.js 내용을 붙여넣는다.
+7. Deploy 한다.
+
+
+15. Cloudflare Application 생성 시 GitHub 연결을 쓰는 경우
+
+Cloudflare에서 GitHub 저장소를 연결해 Application을 생성하려면, 미리 GitHub에 프로젝트를 push해두는 것이 좋다.
+
+이 작업에서는 Cloudflare가 저장소를 읽을 수 있도록 프로젝트를 Public으로 push해두는 방식을 기준으로 한다.
+
+절차:
+
+1. GitHub에 새 저장소를 만든다.
+2. 프로젝트를 push한다.
+3. 저장소 접근 권한을 Public으로 설정한다.
+4. Cloudflare Workers & Pages에서 Create application을 누른다.
+5. GitHub 연결을 선택한다.
+6. 해당 저장소를 선택한다.
+7. 빌드가 필요한 구조가 아니면 Worker 코드 파일을 기준으로 배포하거나, Cloudflare 편집기에서 worker/telegram-gas-proxy.js 내용을 직접 반영한다.
+
+참고:
+단순 Worker는 Cloudflare 웹 편집기에서 직접 코드를 붙여넣고 배포해도 된다.
+
+
+16. Cloudflare Worker URL 켜기
+
+Worker 배포 직후 Overview에서 "No URLs enabled"로 보일 수 있다.
+
+URL 활성화:
+
+1. Worker 프로젝트로 들어간다.
+2. Domain 또는 Domains & Routes 탭을 연다.
+3. workers.dev URL 사용을 켠다.
+4. URL이 생성되는지 확인한다.
+
+예:
+
+    https://260517-schedule-manager-google-calendar-telegram.danccing.workers.dev
+
+브라우저에서 Worker URL을 열었을 때 아래 문구가 보이면 Worker GET 동작은 정상이다.
+
+    Telegram GAS proxy OK
+
+
+17. Cloudflare Worker 변수 등록
+
+Cloudflare Worker 프로젝트에서:
+
+Settings
+-> Variables and Secrets
+-> Add
+
+등록할 변수:
+
+GAS_WEBAPP_URL
+- GAS 웹앱 URL.
+- TELEGRAM_WEBHOOK_KEY를 사용하는 경우 반드시 ?key=... 포함.
+
+예:
+
+    https://script.google.com/macros/s/.../exec?key=ScheduleManagerBot_260517_xxxxx
+
+TELEGRAM_SECRET_TOKEN
+- Telegram setWebhook에 넣는 secret_token과 같은 값.
+- Telegram -> Worker 요청 검증용.
+
+예:
+
+    ScheduleManagerBot_260517_worker_secret
+
+주의:
+- GAS_WEBAPP_URL의 ?key= 값은 GAS 스크립트 속성 TELEGRAM_WEBHOOK_KEY와 같아야 한다.
+- TELEGRAM_SECRET_TOKEN은 Telegram setWebhook의 secret_token과 같아야 한다.
+- 두 값을 같은 문자열로 써도 되지만, 역할은 다르다.
+
+
+18. Cloudflare Worker 코드 역할
+
+worker/telegram-gas-proxy.js는 다음을 수행한다.
+
+1. GET 요청이면 "Telegram GAS proxy OK"를 반환한다.
+2. POST가 아니면 405를 반환한다.
+3. GAS_WEBAPP_URL 변수가 없으면 500을 반환한다.
+4. TELEGRAM_SECRET_TOKEN이 설정되어 있으면 Telegram 헤더 X-Telegram-Bot-Api-Secret-Token을 검사한다.
+5. 요청 body를 읽는다.
+6. ctx.waitUntil로 GAS_WEBAPP_URL에 POST를 전달한다.
+7. Telegram에는 즉시 200 OK를 반환한다.
+
+
+19. Telegram Webhook 등록
+
+Webhook은 GAS URL이 아니라 Cloudflare Worker URL로 등록한다.
+
+PowerShell:
+
+    $token = "TELEGRAM_BOT_TOKEN"
+    $workerUrl = "https://260517-schedule-manager-google-calendar-telegram.danccing.workers.dev"
+    $secret = "TELEGRAM_SECRET_TOKEN과_동일한_값"
+
+    Invoke-RestMethod `
+      -Uri "https://api.telegram.org/bot$token/setWebhook" `
+      -Method Post `
+      -Body @{
+        url = $workerUrl
+        secret_token = $secret
+        drop_pending_updates = "true"
+      }
+
+정상 응답 예:
+
+    ok     result description
+    --     ------ -----------
+    True   True   Webhook was set
+
+
+20. Webhook 상태 확인
+
+PowerShell:
+
+    Invoke-RestMethod "https://api.telegram.org/bot$token/getWebhookInfo" |
+      ConvertTo-Json -Depth 10
+
+정상 확인 포인트:
+
+    "url": "https://260517-schedule-manager-google-calendar-telegram.danccing.workers.dev"
+    "pending_update_count": 0
+
+last_error_message가 없어야 한다.
+
+GAS 직접 연결 시 나타날 수 있는 오류:
+
+    Wrong response from the webhook: 302 Moved Temporarily
+
+이 오류가 보이면 webhook URL이 Worker가 아니라 GAS /exec로 등록되어 있는지 확인한다.
+
+
+21. 기본 동작 테스트
+
+Telegram에서 봇에게 아래 메시지를 보낸다.
+
+    명령어
+
+정상이라면 지원 명령 목록이 온다.
+
+    내일일정
+
+정상이라면 내일 일정 목록 또는 일정 없음 메시지가 온다.
+
+    5.20 연차 = 하루전날
+
+정상이라면 Google Calendar에 종일 일정이 등록되고, The day before at 09:00 알림이 붙는다.
+
+    5.20~5.22 출장 = 오전 9시
+
+정상이라면 기간 종일 일정이 등록되고, On the same day at 09:00 알림이 붙는다.
+
+    5.20 오후 3시 업체 미팅 = 30분 전
+
+정상이라면 시간 일정이 등록되고, 14:30 알림이 붙는다.
+
+
+22. 일정 등록 문법 요약
+
+종일 일정:
+
+    5.20 연차
+    5.20 연차 = 온종일
+    5.20 연차 = 하루종일
+
+기간 일정:
+
+    5.20~5.22 출장 = 하루전날
+    5.20~5.22 출장 = 오전 9시
+
+시간 일정:
+
+    5.20 오후 3시 업체 미팅 = 30분 전
+    5.20 15시 업체 미팅 = 30분 전
+
+반복 일정:
+
+    5.22 오후 2시 회의 = 6.30까지 매주 반복
+
+주의:
+= 뒤에는 "알림" 단어를 붙이지 않는 것으로 통일한다.
+
+좋은 예:
+
+    5.20 연차 = 하루전날
+    5.20 오후 3시 회의 = 30분 전
+
+피할 예:
+
+    5.20 연차 = 하루전날 알림
+    5.20 오후 3시 회의 = 30분 전 알림
+
+
+23. 기본 알림 정책
+
+알림 조건을 쓰지 않으면 기본 알림을 붙인다.
+
+시간 일정:
+- 시작 시각보다 이른 09:00~09:55 사이 5분 간격 슬롯 중 하나를 사용한다.
+- 예: 15:00 일정이면 09:00~09:55 중 하나.
+- 예: 09:10 일정이면 09:00~09:10 중 하나.
+- 09:00 이전 시간 일정은 기본 오전 알림을 생략한다.
+
+종일/기간 일정:
+- Google Calendar 종일 일정 reminder의 On the same day at 09:00 형태로 등록한다.
+
+명시 알림 조건:
+- 하루전날 / 하루 전 / 전날 -> The day before at 09:00
+- 오전 N시 / 오후 N시 / 당일 오전 N시 / 당일 오후 N시 -> 시간 일정에서는 시작 시각 기준 몇 분 전 reminder로 변환
+- 오전 9시 / 당일 오전 9시 -> 종일/기간 일정에서는 On the same day at 09:00
+- 30분 전 -> 시작 30분 전
+- 6시간 전 -> 시작 6시간 전
+
+
+24. 일정 색상 정책
+
+시간 있는 일반 일정:
+
+    colorId: '5'
+
+Google Calendar UI 기준 바나나 색상.
+
+종일/기간 일정:
+
+    colorId: '11'
+
+Google Calendar UI 기준 토마토 색상.
+
+
+25. 2개 이상의 캘린더와 연동하는 방법
+
+기본 캘린더는 CALENDAR_ID를 사용한다.
+
+다른 캘린더는 CALENDAR_ALIASES_JSON에 별칭을 등록한다.
+
+예:
+
+    CALENDAR_ID = primary
+
+    CALENDAR_ALIASES_JSON = {"Tom":"tom_calendar_id@gmail.com","Company":"company_calendar_id@group.calendar.google.com"}
+
+Telegram 입력:
+
+    Tom 일정
+    5.20 연차 = 하루전날
+
+위 입력은 Tom 별칭에 연결된 Calendar ID로 등록된다.
+
+    Company 일정
+    5.20 오후 3시 업체 미팅 = 30분 전
+
+위 입력은 Company 별칭에 연결된 Calendar ID로 등록된다.
+
+주의:
+- CALENDAR_ALIASES_JSON은 반드시 올바른 JSON 형식이어야 한다.
+- Calendar ID는 Google Calendar 설정 화면의 캘린더 ID 값을 그대로 넣는다.
+- 기본 Gmail 주소 형태도 Calendar ID가 맞다면 사용할 수 있다.
+
+
+26. 일일 요약 트리거 설치
+
+매일 오전 9시 오늘 일정을 Telegram으로 받고 싶으면 Apps Script 편집기에서 아래 함수를 1회 실행한다.
+
+    installDailyTrigger
+
+실행 시 권한 승인이 필요할 수 있다.
+
+이 함수는 기존 dailyMorningSummary 트리거를 삭제하고 새로 만든다.
+
+
+27. 배포 후 수정사항 반영
+
+로컬 파일을 수정한 경우:
+
+    clasp push
+
+Apps Script 편집기에 직접 붙여넣는 경우:
+1. 변경된 .gs 파일 내용을 Apps Script에 반영한다.
+2. 배포 -> 배포 관리에서 새 버전 또는 새 배포를 만든다.
+3. 웹앱 URL이 바뀌었으면 Cloudflare Worker의 GAS_WEBAPP_URL도 수정한다.
+
+주의:
+기존에 등록된 Calendar 이벤트에는 코드 변경이 소급 적용되지 않는다. 알림/색상 정책을 바꾼 뒤에는 기존 테스트 일정을 삭제하고 다시 등록해 확인한다.
+
+
+28. 문제 해결 체크리스트
+
+1. Telegram 응답이 없다.
+- getWebhookInfo를 확인한다.
+- webhook URL이 Worker URL인지 확인한다.
+- pending_update_count가 증가하는지 확인한다.
+- last_error_message가 있는지 확인한다.
+
+2. 302 오류가 난다.
+- Telegram webhook이 GAS /exec에 직접 연결되어 있을 가능성이 높다.
+- webhook을 Cloudflare Worker URL로 다시 setWebhook 한다.
+
+3. 봇은 응답하지만 일정 등록이 안 된다.
+- GAS 스크립트 속성 TELEGRAM_BOT_TOKEN, TELEGRAM_ALLOWED_CHAT_ID를 확인한다.
+- TELEGRAM_ALLOWED_CHAT_ID가 실제 메시지를 보낸 chat id와 같은지 확인한다.
+- Apps Script 실행 로그를 확인한다.
+
+4. Worker는 정상인데 GAS로 안 넘어간다.
+- Cloudflare Worker 변수 GAS_WEBAPP_URL이 정확한지 확인한다.
+- GAS_WEBAPP_URL에 ?key=...가 포함되어 있는지 확인한다.
+- ?key= 값이 GAS 스크립트 속성 TELEGRAM_WEBHOOK_KEY와 같은지 확인한다.
+
+5. 다중 캘린더 등록이 실패한다.
+- CALENDAR_ALIASES_JSON이 올바른 JSON인지 확인한다.
+- 별칭 철자가 Telegram 첫 줄과 같은지 확인한다.
+- Calendar ID가 정확한지 확인한다.
+- 해당 캘린더에 Apps Script 실행 계정이 쓰기 권한을 갖고 있는지 확인한다.
+
+6. 알림이 기대와 다르다.
+- 시간 일정과 종일 일정은 Google Calendar의 reminder 표현 방식이 다르다.
+- 종일/기간 일정의 오전 9시는 On the same day at 09:00으로 표시된다.
+- 하루전날은 The day before at 09:00으로 표시된다.
+
+
+29. 최종 확인 순서
+
+1. GAS 웹앱 GET 테스트:
+
+    Telegram Calendar bot OK
+
+2. Worker URL GET 테스트:
+
+    Telegram GAS proxy OK
+
+3. Telegram webhook 확인:
+
+    getWebhookInfo의 url이 Worker URL이어야 한다.
+
+4. Telegram 명령 테스트:
+
+    명령어
+    내일일정
+
+5. 일정 등록 테스트:
+
+    5.20 연차 = 하루전날
+    5.20~5.22 출장 = 오전 9시
+    5.20 오후 3시 업체 미팅 = 30분 전
+
+6. Google Calendar에서 확인:
+- 일정이 생성되었는지
+- 색상이 맞는지
+- 알림이 맞는지
+- 다중 캘린더 별칭 등록 시 대상 캘린더에 들어갔는지

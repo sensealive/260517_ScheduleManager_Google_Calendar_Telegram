@@ -27,7 +27,7 @@ var REGISTRATION_HELP_TEXT =
   '• 종일 일정: M.D 제목 = 온종일 또는 하루종일\n' +
   '  예) 5.20 연차 = 하루종일\n' +
   '• 기본: 알림 조건이 없으면 기본 알림을 붙임\n' +
-  '• 알림 조건: 30분 전 / 6시간 전 / 하루전날 / 오전 9시\n' +
+  '• 알림 조건: 30분 전 / 6시간 전 / 하루전날 / 오전 10시 / 오후 2시\n' +
   '  예) 5.20 연차 = 하루전날\n' +
   '• 기간 일정: M.D~M.D 제목 = 알림 조건\n' +
   '  예) 6.3~6.8 출장 = 하루전날\n' +
@@ -257,11 +257,24 @@ function parseOptionString_(opt, startCtx) {
     out.reminderRules.push({ kind: 'previous_day_morning', hour: 9, minute: 0 });
   }
 
-  if (/당일\s*오전\s*9시/.test(t) || /오전\s*9시/.test(t)) {
-    out.reminderRules.push({ kind: 'same_day_morning', hour: 9, minute: 0 });
+  var at = parseSameDayTimeOption_(t);
+  if (at) {
+    out.reminderRules.push({ kind: 'same_day_morning', hour: at.hour, minute: at.minute });
   }
 
   return out;
+}
+
+function parseSameDayTimeOption_(text) {
+  var m = String(text).match(/(?:당일\s*)?(오전|오후)\s*(\d{1,2})시/);
+  if (!m) return null;
+
+  var hh = Number(m[2]);
+  if (hh < 1 || hh > 12) return null;
+  if (m[1] === '오전') {
+    return { hour: hh === 12 ? 0 : hh, minute: 0 };
+  }
+  return { hour: hh === 12 ? 12 : hh + 12, minute: 0 };
 }
 
 function applyDefaultReminder_(payload) {
