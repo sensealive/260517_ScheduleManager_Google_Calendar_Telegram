@@ -12,8 +12,12 @@ function calendarId_() {
 
 function calendarIdForPayload_(payload) {
   var alias = payload && payload.calendarAlias ? String(payload.calendarAlias).trim() : '';
-  if (!alias) return calendarId_();
+  return calendarIdForAlias_(alias);
+}
 
+function calendarIdForAlias_(alias) {
+  alias = alias ? String(alias).trim() : '';
+  if (!alias) return calendarId_();
   var aliases = calendarAliases_();
   var id = aliases[alias] || aliases[alias.toLowerCase()];
   if (!id) throw new Error('알 수 없는 캘린더 별칭: ' + alias);
@@ -179,27 +183,27 @@ function payloadStartDate_(payload) {
 /**
  * @param {number} dayOffset 서울 기준 오늘으로부터 일 수
  */
-function listAndFormatDay_(dayOffset) {
+function listAndFormatDay_(dayOffset, calendarAlias) {
   var f = seoulFields_(nowSeoul_());
   var ymd = addDaysSeoulYmd_(f.y, f.m, f.day, dayOffset);
-  return formatDayEvents_(ymd.y, ymd.m, ymd.d);
+  return formatDayEvents_(ymd.y, ymd.m, ymd.d, calendarAlias);
 }
 
-function listAndFormatYmd_(y, m, d) {
-  return formatDayEvents_(y, m, d);
+function listAndFormatYmd_(y, m, d, calendarAlias) {
+  return formatDayEvents_(y, m, d, calendarAlias);
 }
 
-function formatDayEvents_(y, month, day) {
+function formatDayEvents_(y, month, day, calendarAlias) {
   var lines = [];
   lines.push(
-    '■ ' + y + '-' + pad2Cal_(month) + '-' + pad2Cal_(day) + ' 일정'
+    '■ ' + y + '-' + pad2Cal_(month) + '-' + pad2Cal_(day) + ' 일정' + calendarLabelSuffix_(calendarAlias)
   );
-  var eventLines = dayEventLines_(y, month, day);
+  var eventLines = dayEventLines_(y, month, day, calendarAlias);
   for (var i = 0; i < eventLines.length; i++) lines.push(eventLines[i]);
   return lines.join('\n');
 }
 
-function listAndFormatNextWeek_() {
+function listAndFormatNextWeek_(calendarAlias) {
   var f = seoulFields_(nowSeoul_());
   var mon = mondayOfWeekContainingYmd_(f.y, f.m, f.day);
   var start = addDaysSeoulYmd_(mon.y, mon.m, mon.d, 7);
@@ -220,22 +224,23 @@ function listAndFormatNextWeek_() {
       pad2Cal_(end.m) +
       '-' +
       pad2Cal_(end.d) +
-      ')'
+      ')' +
+      calendarLabelSuffix_(calendarAlias)
   );
 
   for (var i = 0; i < 7; i++) {
     var ymd = addDaysSeoulYmd_(start.y, start.m, start.d, i);
     lines.push('');
     lines.push('□ ' + pad2Cal_(ymd.m) + '-' + pad2Cal_(ymd.d) + ' (' + week[i] + ')');
-    var evs = dayEventLines_(ymd.y, ymd.m, ymd.d);
+    var evs = dayEventLines_(ymd.y, ymd.m, ymd.d, calendarAlias);
     for (var j = 0; j < evs.length; j++) lines.push(evs[j]);
   }
 
   return lines.join('\n');
 }
 
-function dayEventLines_(y, month, day) {
-  var calId = calendarId_();
+function dayEventLines_(y, month, day, calendarAlias) {
+  var calId = calendarIdForAlias_(calendarAlias);
   var timeMin = new Date(isoSeoul_(y, month, day, 0, 0)).toISOString();
   var nx = addDaysSeoulYmd_(y, month, day, 1);
   var timeMax = new Date(isoSeoul_(nx.y, nx.m, nx.d, 0, 0)).toISOString();
@@ -256,6 +261,10 @@ function dayEventLines_(y, month, day) {
   }
   if (!lines.length) lines.push('(일정 없음)');
   return lines;
+}
+
+function calendarLabelSuffix_(calendarAlias) {
+  return calendarAlias ? ' - ' + String(calendarAlias).trim() : '';
 }
 
 function formatOneEventLine_(ev) {

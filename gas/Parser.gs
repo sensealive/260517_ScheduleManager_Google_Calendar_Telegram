@@ -50,21 +50,23 @@ var COMMAND_LIST_TEXT =
  * @returns {{type:string}|null}
  */
 function tryParseCommand_(text) {
-  var t = String(text)
+  var target = extractCalendarTarget_(String(text).trim());
+  var t = target.line
     .replace(/\s+/g, ' ')
     .trim();
-  if (t === '오늘일정') return { type: 'cmd', cmd: 'today' };
-  if (t === '내일일정') return { type: 'cmd', cmd: 'tomorrow' };
-  if (t === '모레일정') return { type: 'cmd', cmd: 'dayafter' };
-  if (t === '다음주 일정') return { type: 'cmd', cmd: 'nextweekall' };
-  if (t === '명령어') return { type: 'cmd', cmd: 'helpcmd' };
+  var alias = target.alias;
+  if (t === '오늘일정') return { type: 'cmd', cmd: 'today', calendarAlias: alias };
+  if (t === '내일일정') return { type: 'cmd', cmd: 'tomorrow', calendarAlias: alias };
+  if (t === '모레일정') return { type: 'cmd', cmd: 'dayafter', calendarAlias: alias };
+  if (t === '다음주 일정') return { type: 'cmd', cmd: 'nextweekall', calendarAlias: alias };
+  if (t === '명령어') return { type: 'cmd', cmd: 'helpcmd', calendarAlias: alias };
   if (t === '일정등록방법' || t === '등록방법' || t.toLowerCase() === 'help') {
-    return { type: 'cmd', cmd: 'reghelp' };
+    return { type: 'cmd', cmd: 'reghelp', calendarAlias: alias };
   }
   var cw = t.match(/^차주\s*([월화수목금토일])\s*일정$/);
-  if (cw) return { type: 'cmd', cmd: 'nextweek', weekday: cw[1] };
+  if (cw) return { type: 'cmd', cmd: 'nextweek', weekday: cw[1], calendarAlias: alias };
   var dm = t.match(/^(\d{1,2})\.(\d{1,2})\s*일정$/);
-  if (dm) return { type: 'cmd', cmd: 'date', month: Number(dm[1]), day: Number(dm[2]) };
+  if (dm) return { type: 'cmd', cmd: 'date', month: Number(dm[1]), day: Number(dm[2]), calendarAlias: alias };
   return null;
 }
 

@@ -63,17 +63,17 @@ function handleUserText_(text) {
   if (cmd) {
     if (cmd.cmd === 'helpcmd') return COMMAND_LIST_TEXT;
     if (cmd.cmd === 'reghelp') return REGISTRATION_HELP_TEXT;
-    if (cmd.cmd === 'today') return listAndFormatDay_(0);
-    if (cmd.cmd === 'tomorrow') return listAndFormatDay_(1);
-    if (cmd.cmd === 'dayafter') return listAndFormatDay_(2);
-    if (cmd.cmd === 'nextweekall') return listAndFormatNextWeek_();
+    if (cmd.cmd === 'today') return listAndFormatDay_(0, cmd.calendarAlias);
+    if (cmd.cmd === 'tomorrow') return listAndFormatDay_(1, cmd.calendarAlias);
+    if (cmd.cmd === 'dayafter') return listAndFormatDay_(2, cmd.calendarAlias);
+    if (cmd.cmd === 'nextweekall') return listAndFormatNextWeek_(cmd.calendarAlias);
     if (cmd.cmd === 'nextweek') {
       var ymd = nextWeekKoreanWeekdayYmd_(cmd.weekday, nowSeoul_());
-      return listAndFormatYmd_(ymd.y, ymd.m, ymd.d);
+      return listAndFormatYmd_(ymd.y, ymd.m, ymd.d, cmd.calendarAlias);
     }
     if (cmd.cmd === 'date') {
       var y = resolveYearForMonthDay_(cmd.month, cmd.day, nowSeoul_());
-      return listAndFormatYmd_(y, cmd.month, cmd.day);
+      return listAndFormatYmd_(y, cmd.month, cmd.day, cmd.calendarAlias);
     }
   }
 
