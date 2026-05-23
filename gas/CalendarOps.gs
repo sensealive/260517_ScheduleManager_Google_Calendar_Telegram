@@ -98,23 +98,35 @@ function buildAllDayReminderOverrides_(payload) {
   var rules = payload.reminderRules || [];
   var start = payloadStartDate_(payload);
   if (!start || !rules.length) return { useDefault: false, overrides: [] };
+  var useDefault = false;
 
   for (var i = 0; i < rules.length; i++) {
     var r = rules[i];
+    if (r.kind === 'same_day_morning' && isAllDayDefaultSameDayReminder_(r)) {
+      useDefault = true;
+      continue;
+    }
     var minutes = allDayReminderMinutesBeforeStart_(start, r);
     if (minutes !== null) out.push({ method: 'popup', minutes: minutes });
   }
 
+  if (!out.length && useDefault) return { useDefault: true };
   return { useDefault: false, overrides: out };
 }
 
 function allDayReminderMinutesBeforeStart_(start, rule) {
   if (rule.kind === 'minutes') return rule.n;
   if (rule.kind === 'hours_before') return 60 * rule.n;
-  if (rule.kind === 'days_before') return 24 * 60 * rule.n;
+  if (rule.kind === 'days_before') return allDayMorningMinutesBeforeStart_(rule.n, 9, 0);
   if (rule.kind === 'same_day_morning') return 0;
-  if (rule.kind === 'previous_day_morning') return 24 * 60;
+  if (rule.kind === 'previous_day_morning') {
+    return allDayMorningMinutesBeforeStart_(1, rule.hour || 9, rule.minute || 0);
+  }
   return null;
+}
+
+function allDayMorningMinutesBeforeStart_(daysBefore, hour, minute) {
+  return daysBefore * 24 * 60 - hour * 60 - minute;
 }
 
 function rruleUntilStr_(untilYmd) {

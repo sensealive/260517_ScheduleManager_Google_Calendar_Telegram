@@ -4,6 +4,8 @@
 
 var MSG_PAST =
   '메시지 등록 실패 (미래 일정만 등록 가능)';
+var MSG_UNSUPPORTED_ALLDAY_SAME_DAY_REMINDER =
+  '종일/기간 일정의 당일 특정 시간 알림은 캘린더 기본 알림(당일 오전 9시)만 지원됩니다.';
 
 var HELP_TEXT =
   '올바른 예시)\n' +
@@ -27,7 +29,7 @@ var REGISTRATION_HELP_TEXT =
   '• 종일 일정: M.D 제목 = 온종일 또는 하루종일\n' +
   '  예) 5.20 연차 = 하루종일\n' +
   '• 기본: 알림 조건이 없으면 기본 알림을 붙임\n' +
-  '• 알림 조건: 30분 전 / 6시간 전 / 하루전날 / 오전 10시 / 오후 2시\n' +
+  '• 알림 조건: 30분 전 / 6시간 전 / 하루전날 / 3일전 / 일주일 전 / 한달전 / 오전 10시\n' +
   '  예) 5.20 연차 = 하루전날\n' +
   '• 기간 일정: M.D~M.D 제목 = 알림 조건\n' +
   '  예) 6.3~6.8 출장 = 하루전날\n' +
@@ -54,13 +56,14 @@ function tryParseCommand_(text) {
   var t = target.line
     .replace(/\s+/g, ' ')
     .trim();
+  var compact = normalizeCommandText_(t);
   var alias = target.alias;
-  if (t === '오늘일정') return { type: 'cmd', cmd: 'today', calendarAlias: alias };
-  if (t === '내일일정') return { type: 'cmd', cmd: 'tomorrow', calendarAlias: alias };
-  if (t === '모레일정') return { type: 'cmd', cmd: 'dayafter', calendarAlias: alias };
-  if (t === '다음주 일정') return { type: 'cmd', cmd: 'nextweekall', calendarAlias: alias };
-  if (t === '명령어') return { type: 'cmd', cmd: 'helpcmd', calendarAlias: alias };
-  if (t === '일정등록방법' || t === '등록방법' || t.toLowerCase() === 'help') {
+  if (compact === '오늘일정') return { type: 'cmd', cmd: 'today', calendarAlias: alias };
+  if (compact === '내일일정') return { type: 'cmd', cmd: 'tomorrow', calendarAlias: alias };
+  if (compact === '모레일정') return { type: 'cmd', cmd: 'dayafter', calendarAlias: alias };
+  if (compact === '다음주일정') return { type: 'cmd', cmd: 'nextweekall', calendarAlias: alias };
+  if (compact === '명령어') return { type: 'cmd', cmd: 'helpcmd', calendarAlias: alias };
+  if (compact === '일정등록방법' || compact === '등록방법' || t.toLowerCase() === 'help') {
     return { type: 'cmd', cmd: 'reghelp', calendarAlias: alias };
   }
   var cw = t.match(/^차주\s*([월화수목금토일])\s*일정$/);
@@ -68,6 +71,12 @@ function tryParseCommand_(text) {
   var dm = t.match(/^(\d{1,2})\.(\d{1,2})\s*일정$/);
   if (dm) return { type: 'cmd', cmd: 'date', month: Number(dm[1]), day: Number(dm[2]), calendarAlias: alias };
   return null;
+}
+
+function normalizeCommandText_(text) {
+  return String(text)
+    .replace(/\s+/g, '')
+    .trim();
 }
 
 /**
@@ -183,8 +192,6 @@ function parseRegistrationLine_(line) {
     if (timed) {
       return { ok: false, error: HELP_TEXT };
     }
-    var rangeFirstStart = fromSeoul_(y, month, day, 0, 0);
-    if (rangeFirstStart.getTime() < now.getTime()) return { ok: false, error: MSG_PAST };
   } else {
     if (timed) {
       payload.kind = 'timed';
@@ -207,6 +214,8 @@ function parseRegistrationLine_(line) {
   }
 
   applyDefaultReminder_(payload);
+  var reminderValidation = validateReminderRulesForPayload_(payload);
+  if (!reminderValidation.ok) return reminderValidation;
   return { ok: true, payload: payload };
 }
 
@@ -255,7 +264,9 @@ function parseOptionString_(opt, startCtx) {
   if (/30분\s*전/.test(t)) out.reminderRules.push({ kind: 'minutes', n: 30 });
   var hm = t.match(/(\d{1,2})\s*시간\s*전/);
   if (hm) out.reminderRules.push({ kind: 'hours_before', n: Number(hm[1]) });
-  if (/1일\s*전|하루\s*전|하루전날|전날/.test(t)) {
+  var daysBefore = parseDaysBeforeOption_(t);
+  if (daysBefore !== null) out.reminderRules.push({ kind: 'days_before', n: daysBefore });
+  if (daysBefore === null && /1일\s*전|하루\s*전|하루전날|전날/.test(t)) {
     out.reminderRules.push({ kind: 'previous_day_morning', hour: 9, minute: 0 });
   }
 
@@ -267,16 +278,60 @@ function parseOptionString_(opt, startCtx) {
   return out;
 }
 
+function parseDaysBeforeOption_(text) {
+  var t = String(text).replace(/\s+/g, '');
+
+  if (/(일주일|한주|1주일|1주)전날?/.test(t)) return 7;
+  if (/한달전날?/.test(t)) return 30;
+  if (/이틀전날?/.test(t)) return 2;
+
+  var week = t.match(/(\d{1,2})주일?전날?/);
+  if (week) return Number(week[1]) * 7;
+
+  var day = t.match(/(\d{1,3})일전날?/);
+  if (day) {
+    var n = Number(day[1]);
+    if (n >= 2) return n;
+  }
+
+  return null;
+}
+
 function parseSameDayTimeOption_(text) {
-  var m = String(text).match(/(?:당일\s*)?(오전|오후)\s*(\d{1,2})시/);
+  var m = String(text).match(/(?:당일\s*)?(?:(오전|오후)\s*)?(\d{1,2})시/);
   if (!m) return null;
 
   var hh = Number(m[2]);
+  if (hh < 0 || hh > 23) return null;
+  if (!m[1]) return { hour: hh, minute: 0 };
   if (hh < 1 || hh > 12) return null;
   if (m[1] === '오전') {
     return { hour: hh === 12 ? 0 : hh, minute: 0 };
   }
   return { hour: hh === 12 ? 12 : hh + 12, minute: 0 };
+}
+
+function validateReminderRulesForPayload_(payload) {
+  if (payload.kind !== 'allday_single' && payload.kind !== 'allday_range') {
+    return { ok: true };
+  }
+
+  var rules = payload.reminderRules || [];
+  for (var i = 0; i < rules.length; i++) {
+    var r = rules[i];
+    if (r.kind === 'same_day_morning' && !isAllDayDefaultSameDayReminder_(r)) {
+      return {
+        ok: false,
+        error: MSG_UNSUPPORTED_ALLDAY_SAME_DAY_REMINDER,
+      };
+    }
+  }
+
+  return { ok: true };
+}
+
+function isAllDayDefaultSameDayReminder_(rule) {
+  return (rule.hour || 9) === 9 && (rule.minute || 0) === 0;
 }
 
 function applyDefaultReminder_(payload) {
