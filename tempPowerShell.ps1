@@ -1,0 +1,1 @@
+clasp.cmd login --use-project-scopes --include-clasp-scopes --extra-scopes "https://www.googleapis.com/auth/calendar.readonly"
