@@ -4,7 +4,7 @@
 
 ## 개요
 
-- **등록:** `5.25 오후 3시 제목 = 30분 전` 형식(자세한 규칙은 [PROJECT_CONTEXT.md](./PROJECT_CONTEXT.md)).
+- **등록:** `5.25 오후 3시 제목 = 30분 전` 형식(자세한 규칙은 [PROJECT_CONTEXT.md](./MDs/PROJECT_CONTEXT.md)).
 - **조회:** `오늘일정`, `내일일정`, `6.20 일정`, `차주 금 일정`, `명령어` 등.
 - **일일 요약:** `dailyMorningSummary`를 매일 9시(서울)에 실행하는 트리거로 설치.
 
@@ -58,11 +58,11 @@
 
 | 파일 | 용도 |
 |------|------|
-| [PROJECT_CONTEXT.md](./PROJECT_CONTEXT.md) | 요구사항·메시지 규칙 |
-| [DECISIONS.md](./DECISIONS.md) | 아키텍처 결정 |
-| [WORK_LOG.md](./WORK_LOG.md) | 작업 기록 |
-| [TODO.md](./TODO.md) | 할 일 |
-| [BUGS.md](./BUGS.md) | 이슈 |
+| [PROJECT_CONTEXT.md](./MDs/PROJECT_CONTEXT.md) | 요구사항·메시지 규칙 |
+| [DECISIONS.md](./MDs/DECISIONS.md) | 아키텍처 결정 |
+| [WORK_LOG.md](./MDs/WORK_LOG.md) | 작업 기록 |
+| [TODO.md](./MDs/TODO.md) | 할 일 |
+| [BUGS.md](./MDs/BUGS.md) | 이슈 |
 
 ## 라이선스
 
