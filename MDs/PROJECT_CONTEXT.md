@@ -104,3 +104,12 @@
 ## 용어
 
 - **GAS**: Google Apps Script. **Webhook**: Telegram이 업데이트를 POST하는 URL.
+
+## 관련 (Obsidian Vault)
+
+- [[../../02_Wiki/Telegram/Telegram|Telegram]] — 이 Vault에서 유일한 **양방향**(수신+발송) 사례. 이름이 비슷한 값 3가지 정리
+- [[../../02_Wiki/Automation/Automation|Google Apps Script]] — GAS 웹앱과 트리거 패턴
+- [[../../02_Wiki/Patterns/Auth_Key_Pairs|키 쌍 혼동 패턴]] — `TELEGRAM_SECRET_TOKEN` ↔ `TELEGRAM_WEBHOOK_KEY` 혼동 사례
+- [[../../02_Wiki/Patterns/My_Dev_Stack|내 개발 스택]]
+
+> 아래 링크는 Obsidian Vault(`HermesVault/03_Projects/`)에서 열 때 동작한다. GitHub에서는 일반 텍스트로 보인다.
